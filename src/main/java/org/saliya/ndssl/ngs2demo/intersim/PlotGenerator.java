@@ -14,8 +14,8 @@ import java.util.stream.IntStream;
  * Saliya Ekanayake on 3/16/17.
  */
 public class PlotGenerator {
-    static Pattern pat = Pattern.compile(" ");
-    static int[] ageRanges;
+    private static Pattern pat = Pattern.compile(" ");
+    private static int[] ageRanges;
     public static void main(String[] args) {
         String file = args[0];
         int numBuckets = Integer.parseInt(args[1]);
@@ -40,14 +40,14 @@ public class PlotGenerator {
 
         findInfectedByAgeGroup(infectedByAgeGroupFile, intersimData , numBuckets);
 
-//        findNeighborInfo(graphFile, intersimData, numBuckets);
+        findNeighborInfo(graphFile, intersimData, numBuckets);
 
     }
 
     private static void findNeighborInfo(String graphFile, IntersimData intersimData, int numBuckets) {
         try(BufferedReader reader = java.nio.file.Files.newBufferedReader(Paths.get(graphFile))) {
             TreeMap<Integer, IntersimAgent> nodeIdToIntersimAgent = intersimData.getNodeIdToIntersimAgent();
-            String line = null;
+            String line;
             while (!Strings.isNullOrEmpty(line = reader.readLine())){
                 String[] splits = pat.split(line);
                 int nodeId = Integer.parseInt(splits[0]);
@@ -64,39 +64,39 @@ public class PlotGenerator {
                 agent.setAgeGroupIdx(ageToBucketIdx(agent.getAge(), numBuckets, ageRanges));
                 agent.setAvgNbrAgeGroupIdx(ageToBucketIdx((int)agent.getAverageNeighborAge(), numBuckets, ageRanges));
             });
+
+            File f = new File(graphFile);
+            String dir = f.getParent();
+            String fileNameWithoutExtension = Files.getNameWithoutExtension(graphFile);
+
             // DEBUG
-            {
-                System.out.println("NodeId Age Gender AvgNbrAge");
+            try(BufferedWriter bw = java.nio.file.Files.newBufferedWriter(Paths.get(dir,
+                    fileNameWithoutExtension+"_vectors.txt"))){
+                PrintWriter writer = new PrintWriter(bw, true);
+                writer.println("NodeId Age Gender AvgNbrAge");
                 nodeIdToIntersimAgent.entrySet().forEach(nodeIdToV -> {
                     int nodeId = nodeIdToV.getKey();
                     IntersimAgent nodeAgent = nodeIdToV.getValue();
                     double averageNeighborAge = nodeAgent
                             .getAverageNeighborAge();
-                    System.out.println(nodeId + " " + nodeAgent.getAge() + " " + nodeAgent.getGender() + " " + averageNeighborAge);
+                    writer.println(nodeId + " " + nodeAgent.getAge() + " " + nodeAgent.getGender() + " " +
+                            averageNeighborAge);
                 });
             }
 
-            File f = new File(graphFile);
-            String dir = f.getParent();
-            String fileNameWithoutExtension = Files.getNameWithoutExtension(graphFile);
+
             Path distanceFile = Paths.get(dir, fileNameWithoutExtension+"_distance.bin");
             double normalizationConstant = 1.0*Short.MAX_VALUE/20000;
-//            double normalizationConstant = 1.0*Short.MAX_VALUE/200;
             try(BufferedOutputStream bos = new BufferedOutputStream(java.nio.file.Files.newOutputStream(distanceFile))){
                 DataOutputStream dos = new DataOutputStream(bos);
-                nodeIdToIntersimAgent.values().forEach(agentI -> {
-                    nodeIdToIntersimAgent.values().forEach(agentJ -> {
-                        try {
-                            short normalizedDistance = agentI.getNormalizedDistance(agentJ, normalizationConstant);
-//                            short normalizedDistance = agentI.getNormalizedDistanceFromAgeGroup(agentJ, normalizationConstant);
-//                            System.out.print(normalizedDistance + " ");
-                            dos.writeShort(normalizedDistance);
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    });
-                    System.out.println();
-                });
+                nodeIdToIntersimAgent.values().forEach(agentI -> nodeIdToIntersimAgent.values().forEach(agentJ -> {
+                    try {
+                        short normalizedDistance = agentI.getNormalizedDistance(agentJ, normalizationConstant);
+                        dos.writeShort(normalizedDistance);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }));
             }
 
         } catch (IOException e) {
@@ -158,9 +158,7 @@ public class PlotGenerator {
                 int iter = iterToV.getKey();
                 writer.println("\nIteration: " + iter);
                 writer.print("TS ");
-                IntStream.range(0,numBuckets).forEach(ageGroupIdx -> {
-                    writer.print(" [" + ageRanges[ageGroupIdx] + "," + (ageRanges[ageGroupIdx + 1] - 1) + "]");
-                });
+                IntStream.range(0,numBuckets).forEach(ageGroupIdx -> writer.print(" [" + ageRanges[ageGroupIdx] + "," + (ageRanges[ageGroupIdx + 1] - 1) + "]"));
                 writer.println();
                 iterToV.getValue().entrySet().forEach(timeStampToV -> {
                     int timeStamp = timeStampToV.getKey();
@@ -216,9 +214,4 @@ public class PlotGenerator {
         return -1;
     }
 
-    private static int ageToBucketIdx(int age, int minAge, int bucketSize){
-        int diff = age - minAge;
-        int p = diff / bucketSize;
-        return p;
-    }
 }
