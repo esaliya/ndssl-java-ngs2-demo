@@ -18,15 +18,17 @@ public class PlotGenerator {
     private static int[] ageRanges;
     public static void main(String[] args) {
         String file = args[0];
-        int numBuckets = Integer.parseInt(args[1]);
+        int totalTimeSteps = Integer.parseInt(args[1]);
+        int numBuckets = Integer.parseInt(args[2]);
         String bucketsStr = null;
-        if (args.length > 2) {
-            bucketsStr = args[2];
+        if (args.length > 3) {
+            bucketsStr = args[3];
         }
         String graphFile = null;
-        if (args.length > 3){
-            graphFile = args[3];
+        if (args.length > 4){
+            graphFile = args[4];
         }
+
 
         File f = new File(file);
         String dir = f.getParent();
@@ -38,7 +40,7 @@ public class PlotGenerator {
 
         findAgeRanges(numBuckets, bucketsStr, intersimData.getNodeIdToIntersimAgent());
 
-        findInfectedByAgeGroup(infectedByAgeGroupFile, intersimData , numBuckets);
+        findInfectedByAgeGroup(infectedByAgeGroupFile, intersimData , numBuckets, totalTimeSteps);
 
         findNeighborInfo(graphFile, intersimData, numBuckets);
 
@@ -105,7 +107,7 @@ public class PlotGenerator {
     }
 
 
-    private static void findInfectedByAgeGroup(Path infectedByAgeGroupFile, IntersimData intersimData, int numBuckets) {
+    private static void findInfectedByAgeGroup(Path infectedByAgeGroupFile, IntersimData intersimData, int numBuckets, int totalTimeSteps) {
         try (BufferedWriter bw = java.nio.file.Files.newBufferedWriter(infectedByAgeGroupFile)) {
             PrintWriter writer = new PrintWriter(bw, true);
             TreeMap<Integer, IntersimAgent> nodeIdToIntersimAgent = intersimData.getNodeIdToIntersimAgent();
@@ -118,11 +120,16 @@ public class PlotGenerator {
                 ageGroupIdxToTotalCount.put(ageGroupIdx, ageGroupIdxToTotalCount.get(ageGroupIdx)+1);
             }
 
+            int totalNumberOfAgents = 0;
+            for (Integer v : ageGroupIdxToTotalCount.values()){
+                totalNumberOfAgents += v;
+            }
+
             TreeMap<Integer, TreeMap<Integer, TreeMap<Integer, int[]>>> iterToTimeStampToNodeIdToStates
                     = intersimData.getIterToTimeStampToNodeIdToStates();
             TreeMap<Integer, TreeMap<Integer, TreeMap<Integer, Integer>>> iterToTimeStampToAgeGroupIdxToInfectedCount =
-                    new
-                    TreeMap<>();
+                    new TreeMap<>();
+
             iterToTimeStampToNodeIdToStates.entrySet().forEach(iterToV -> {
                 int iter = iterToV.getKey();
 
@@ -154,25 +161,90 @@ public class PlotGenerator {
                 });
             });
 
+
+
+            int finalTotalNumberOfAgents = totalNumberOfAgents;
+            TreeMap<Integer, TreeMap<Integer, Integer>> timeStampToAgeGroupIdxToCumulativeInfectedCount = new
+                    TreeMap<>();
+            TreeMap<Integer, Integer> timeStampToItrCount = new TreeMap<>();
+            int totalIterations = iterToTimeStampToAgeGroupIdxToInfectedCount.size();
             iterToTimeStampToAgeGroupIdxToInfectedCount.entrySet().forEach(iterToV -> {
                 int iter = iterToV.getKey();
                 writer.println("\nIteration: " + iter);
                 writer.print("TS ");
                 IntStream.range(0,numBuckets).forEach(ageGroupIdx -> writer.print(" [" + ageRanges[ageGroupIdx] + "," + (ageRanges[ageGroupIdx + 1] - 1) + "]"));
                 writer.println();
+
+                TreeMap<Integer, Integer> ageGroupIdxToCumulativeInfectedCount = new TreeMap<>();
                 iterToV.getValue().entrySet().forEach(timeStampToV -> {
                     int timeStamp = timeStampToV.getKey();
+                    if (!timeStampToAgeGroupIdxToCumulativeInfectedCount.containsKey(timeStamp)){
+                        timeStampToAgeGroupIdxToCumulativeInfectedCount.put(timeStamp, new TreeMap<>());
+                    }
+                    if (!timeStampToItrCount.containsKey(timeStamp)){
+                        timeStampToItrCount.put(timeStamp, 1);
+                    } else {
+                        timeStampToItrCount.put(timeStamp, timeStampToItrCount.get(timeStamp)+1);
+                    }
                     writer.print(timeStamp);
                     TreeMap<Integer, Integer> ageGroupIdxToInfectedCount = timeStampToV.getValue();
                     IntStream.range(0,numBuckets).forEach(ageGroupIdx -> {
-                        int infectedCount = ageGroupIdxToInfectedCount.containsKey(ageGroupIdx) ?
-                                ageGroupIdxToInfectedCount.get(ageGroupIdx) : 0;
-                        writer.printf(" %.2f", (infectedCount*1.0/ageGroupIdxToTotalCount.get(ageGroupIdx)));
+                        if (!timeStampToAgeGroupIdxToCumulativeInfectedCount.get(timeStamp).containsKey(ageGroupIdx)){
+                            timeStampToAgeGroupIdxToCumulativeInfectedCount.get(timeStamp).put(ageGroupIdx, 0);
+                        }
+                        int infectedCount = ageGroupIdxToInfectedCount.getOrDefault(ageGroupIdx, 0);
+                        int cumulativeInfectedCount = infectedCount + (ageGroupIdxToCumulativeInfectedCount.getOrDefault(ageGroupIdx, 0));
+                        ageGroupIdxToCumulativeInfectedCount.put(ageGroupIdx, cumulativeInfectedCount);
+
+                        timeStampToAgeGroupIdxToCumulativeInfectedCount.get(timeStamp).put(ageGroupIdx,
+                                timeStampToAgeGroupIdxToCumulativeInfectedCount.get(timeStamp).get(ageGroupIdx)+cumulativeInfectedCount);
+
+                        writer.printf(" %.2f", (cumulativeInfectedCount*1.0/finalTotalNumberOfAgents));
 
                     });
                     writer.println();
                 });
+
+                // Assuming only the last timesteps are missing, i.e. everything in the middle is complete
+                if(iterToV.getValue().size() < totalTimeSteps){
+                    int[] lastReportedTimeStamp = new int[]{Integer.MIN_VALUE};
+                    iterToV.getValue().keySet().forEach(k -> lastReportedTimeStamp[0] = Math.max
+                            (lastReportedTimeStamp[0], k));
+                    int diff = totalTimeSteps - iterToV.getValue().size();
+                    for (int i = lastReportedTimeStamp[0]+1; i <= lastReportedTimeStamp[0]+diff; ++i){
+                        writer.print(i);
+                        int finalI = i;
+                        if (!timeStampToAgeGroupIdxToCumulativeInfectedCount.containsKey(finalI)){
+                            timeStampToAgeGroupIdxToCumulativeInfectedCount.put(finalI, new TreeMap<>());
+                        }
+                        IntStream.range(0,numBuckets).forEach(ageGroupIdx -> {
+                            if (!timeStampToAgeGroupIdxToCumulativeInfectedCount.get(finalI).containsKey(ageGroupIdx)){
+                                timeStampToAgeGroupIdxToCumulativeInfectedCount.get(finalI).put(ageGroupIdx, 0);
+                            }
+                            int cumulativeInfectedCount =  ageGroupIdxToCumulativeInfectedCount.get(ageGroupIdx);
+                            timeStampToAgeGroupIdxToCumulativeInfectedCount.get(finalI).put(ageGroupIdx,
+                                    timeStampToAgeGroupIdxToCumulativeInfectedCount.get(finalI).get(ageGroupIdx)
+                                            +cumulativeInfectedCount);
+                            writer.printf(" %.2f", (cumulativeInfectedCount*1.0/finalTotalNumberOfAgents));
+                        });
+                        writer.println();
+                    }
+                }
+
             });
+
+            writer.println("Avg. Over All Iterations");
+            timeStampToAgeGroupIdxToCumulativeInfectedCount.entrySet().forEach(timeStampToV -> {
+                int timeStamp = timeStampToV.getKey();
+                writer.print(timeStamp);
+                timeStampToV.getValue().entrySet().forEach(kv -> {
+                    int ageGroupIdx = kv.getKey();
+                    int cumulativeInfectedCount = kv.getValue();
+                    writer.printf(" %.2f", (cumulativeInfectedCount*1.0/(finalTotalNumberOfAgents*totalIterations)));
+                });
+                writer.println();
+            });
+
         } catch (IOException e) {
             e.printStackTrace();
         }
